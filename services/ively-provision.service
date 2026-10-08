@@ -1,0 +1,14 @@
+[Unit]
+Description=Ively SmartEye™ Provision UI
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/ively/edge/provision-ui
+ExecStart=/usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 2025
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

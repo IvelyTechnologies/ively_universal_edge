@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "media": {
+    "video_mode": "transcode",
+    "width": 640,
+    "height": 360,
+    "fps": 15,
+    "bitrate": "768k",
+    "maxrate": "900k",
+    "bufsize": "1536k"
+  },
+  "sources": [
+    {
+      "id": "legacy-nvr",
+      "type": "nvr",
+      "legacy_cameras": true
+    },
+    {
+      "id": "analog-dvr-channel-1",
+      "type": "dvr",
+      "path": "customer_site_analog_dvr_ch1_low",
+      "channel": 1,
+      "dvr": {
+        "host": "192.168.1.6",
+        "port": 554,
+        "credential_id": "customer-dvr"
+      }
+    }
+  ]
+}

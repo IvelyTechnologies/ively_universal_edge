@@ -1,0 +1,26 @@
+[Unit]
+Description=Ively SmartEye Edge Agent
+After=network-online.target wg-quick@wg0.service mediamtx.service
+Wants=network-online.target mediamtx.service
+StartLimitIntervalSec=5min
+StartLimitBurst=6
+
+[Service]
+WorkingDirectory=/opt/ively/edge
+Environment=PYTHONPATH=/opt/ively/edge
+Environment=IVELY_RTSP_STREAM_PROFILE=main
+# NVR live output profile. Kept separate from analog-dvr-edge, which has its own config.
+Environment='IVELY_STREAM_PROFILES_JSON={"low":{"width":"640","height":"360","fps":"15","bitrate":"768k","maxrate":"900k","bufsize":"1536k"}}'
+# Prevent a large RTSP jitter queue from adding many seconds of live delay.
+Environment=IVELY_FFMPEG_REORDER_QUEUE_SIZE=64
+# Legacy fallback only; IVELY_RTSP_STREAM_PROFILE above controls main/sub selection now.
+# Environment=IVELY_SUBSTREAM_ONLY=1
+Environment=IVELY_RTSP_PROBE_URLS=1
+ExecStart=/opt/ively/edge/installer/run-ively-agent.sh
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

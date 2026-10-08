@@ -1,0 +1,38 @@
+{
+  "media": {
+    "bitrate": "768k",
+    "bufsize": "1536k",
+    "fps": 15,
+    "gop": 30,
+    "height": 360,
+    "maxrate": "900k",
+    "video_mode": "transcode",
+    "width": 640
+  },
+  "path_prefix": "",
+  "sources": [
+    {
+      "dvr": {
+        "channel": 1,
+        "credential_id": "dvr-local-test-dvr-1",
+        "host": "192.0.2.10",
+        "port": 554,
+        "url_templates": []
+      },
+      "id": "local-test-dvr-1",
+      "media": {
+        "bitrate": "768k",
+        "bufsize": "1536k",
+        "fps": 15,
+        "gop": 30,
+        "height": 360,
+        "maxrate": "900k",
+        "video_mode": "transcode",
+        "width": 640
+      },
+      "path": "local_test_dvr_ch1",
+      "type": "dvr"
+    }
+  ],
+  "version": 1
+}

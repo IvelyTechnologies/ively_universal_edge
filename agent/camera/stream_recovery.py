@@ -1,0 +1,195 @@
+# stream_recovery - keep paths ready:true; recover worker / MediaMTX / full reload
+
+import json
+import threading
+import time
+import urllib.error
+import urllib.request
+from typing import TYPE_CHECKING, Dict, List, Optional
+
+from agent.camera.stream_watch import load_stream_paths, stream_ok
+from agent.config import (
+    MEDIAMTX_API_PORT,
+    RTSP_PORT,
+    STREAM_NOT_READY_ESCALATE_SEC,
+)
+
+if TYPE_CHECKING:
+    from agent.camera.camera_worker import CameraWorkerManager
+
+# How long path may stay not-ready before escalation (seconds)
+NOT_READY_ESCALATE_SEC = STREAM_NOT_READY_ESCALATE_SEC
+_last_full_reload: float = 0.0
+_full_reload_cooldown_sec = 120.0
+_not_ready_since: Dict[str, float] = {}
+_worker_startup_grace_sec = 15.0
+# Both the main recovery loop and watchdog call recover_streams().  Serializing
+# this prevents a second loop from mistaking workers being restarted by the
+# first loop as "missing" and initiating another full MediaMTX reload.
+_recovery_lock = threading.Lock()
+
+
+def _worker_is_running(worker) -> bool:
+    """Support both property-style and method-style worker APIs safely."""
+    value = getattr(worker, "is_running", False)
+    return bool(value() if callable(value) else value)
+
+
+def fetch_mediamtx_ready(timeout_sec: float = 5.0) -> Dict[str, bool]:
+    """Query MediaMTX API for per-path publisher readiness."""
+    url = f"http://127.0.0.1:{MEDIAMTX_API_PORT}/v3/paths/list"
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError):
+        return {}
+    items = data.get("items") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return {}
+    result: Dict[str, bool] = {}
+    for item in items:
+        if isinstance(item, dict) and item.get("name"):
+            result[str(item["name"])] = bool(item.get("ready"))
+    return result
+
+
+def recover_streams(
+    manager: "CameraWorkerManager",
+    *,
+    ffprobe_check: bool = False,
+) -> dict:
+    if not _recovery_lock.acquire(blocking=False):
+        return {"actions": ["recovery already in progress"], "paths": [], "ready": {}}
+    try:
+        return _recover_streams(manager, ffprobe_check=ffprobe_check)
+    finally:
+        _recovery_lock.release()
+
+
+def _recover_streams(
+    manager: "CameraWorkerManager",
+    *,
+    ffprobe_check: bool = False,
+) -> dict:
+    """
+    Recover streams when workers, publishers, or MediaMTX paths drift.
+
+    Layers (in order):
+      1. Worker health_check (crash / freeze / stall)
+      2. MediaMTX ready:false while worker running → restart worker
+      3. ready:true but ffprobe fails → restart worker (optional)
+      4. Stuck not-ready past NOT_READY_ESCALATE_SEC → force restart or full reload
+    """
+    global _last_full_reload
+
+    # Legacy combined installs have a second owner for analog paths, so retain
+    # the historical exclusion there. A unified install owns every worker in
+    # this manager and must recover every configured source individually.
+    try:
+        from agent.unified.config import load_config
+
+        unified_mode = load_config() is not None
+    except Exception:
+        unified_mode = False
+    paths = (
+        list(manager.get_all_metrics().keys())
+        if unified_mode
+        else load_stream_paths(include_external=False)
+    )
+    if not paths:
+        return {"actions": [], "paths": [], "ready": {}}
+
+    ready_map = fetch_mediamtx_ready()
+    now = time.monotonic()
+    ready_paths = {name for name, ready in ready_map.items() if ready}
+    worker_issues = manager.health_check_all(ready_paths=ready_paths)
+    actions: List[str] = []
+    for name, status in worker_issues.items():
+        # MediaMTX ready:true means the publisher is currently delivering frames.
+        # Avoid noisy false-stall restarts from the FFmpeg progress parser.
+        if ready_map.get(name) and "stalled" in str(status):
+            actions.append(f"{name}: ignored false stall (mediamtx ready)")
+            continue
+        actions.append(f"{name}: {status}")
+
+    for path in paths:
+        worker = manager.get_worker(path)
+        is_ready = ready_map.get(path, False)
+
+        if is_ready:
+            _not_ready_since.pop(path, None)
+            if ffprobe_check and worker and _worker_is_running(worker):
+                url = f"rtsp://127.0.0.1:{RTSP_PORT}/{path}"
+                if not stream_ok(url, timeout_sec=6.0):
+                    if manager.restart_worker(path):
+                        actions.append(f"{path}: ffprobe fail → worker restarted")
+                    else:
+                        actions.append(f"{path}: ffprobe fail → cooldown")
+            continue
+
+        # Path not ready
+        if path not in _not_ready_since:
+            _not_ready_since[path] = now
+
+        stuck_sec = now - _not_ready_since.get(path, now)
+
+        if worker is None:
+            if unified_mode:
+                actions.append(f"{path}: missing managed worker; waiting for explicit configuration repair")
+                continue
+            if stuck_sec >= 30 and (now - _last_full_reload) >= _full_reload_cooldown_sec:
+                actions.extend(_full_reload(manager, reason=f"{path}: missing worker"))
+            continue
+
+        if _worker_is_running(worker):
+            uptime = float(getattr(worker, "uptime", _worker_startup_grace_sec) or 0.0)
+            if hasattr(worker, "uptime") and uptime < _worker_startup_grace_sec:
+                actions.append(f"{path}: not ready during startup grace ({uptime:.1f}s)")
+                continue
+            if stuck_sec < NOT_READY_ESCALATE_SEC:
+                actions.append(f"{path}: not ready for {stuck_sec:.1f}s; waiting before restart")
+                continue
+            if manager.restart_worker(path):
+                _not_ready_since[path] = time.monotonic()
+                actions.append(f"{path}: not ready for {stuck_sec:.1f}s → worker restarted")
+            elif manager.force_restart_worker(path):
+                _not_ready_since[path] = time.monotonic()
+                actions.append(f"{path}: not ready → force restart (cleared cooldown)")
+            elif not unified_mode and (now - _last_full_reload) >= _full_reload_cooldown_sec:
+                actions.extend(_full_reload(manager, reason=f"{path}: not ready + cooldown"))
+        else:
+            if manager.restart_worker(path):
+                _not_ready_since[path] = time.monotonic()
+                actions.append(f"{path}: not ready + stopped → worker restarted")
+            elif stuck_sec >= NOT_READY_ESCALATE_SEC:
+                if manager.force_restart_worker(path):
+                    _not_ready_since[path] = time.monotonic()
+                    actions.append(f"{path}: stopped → force restart")
+                elif not unified_mode and (now - _last_full_reload) >= _full_reload_cooldown_sec:
+                    actions.extend(_full_reload(manager, reason=f"{path}: stopped + cooldown"))
+
+    return {
+        "actions": actions,
+        "paths": paths,
+        "ready": ready_map,
+    }
+
+
+def _full_reload(manager: "CameraWorkerManager", reason: str) -> List[str]:
+    """Regenerate config, restart MediaMTX if needed, reload all workers."""
+    global _last_full_reload
+    from agent.camera.worker_reload import reload_workers
+
+    print(f"[recovery] Full worker reload: {reason}")
+    try:
+        result = reload_workers(manager)
+        _last_full_reload = time.monotonic()
+        _not_ready_since.clear()
+        return [
+            f"full_reload: {reason}",
+            f"started {result.get('started')}/{result.get('total')} "
+            f"{result.get('stream_names')}",
+        ]
+    except Exception as e:
+        return [f"full_reload failed: {e}"]
