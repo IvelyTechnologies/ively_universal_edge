@@ -15,14 +15,14 @@ End-to-end flow from preparing the device to a working, provisioned edge with st
 | 1.1 | **Hardware** | MINI PC or Debian/Ubuntu machine (x86_64 or ARM). Monitor/keyboard or SSH access. |
 | 1.2 | **OS** | Install **Debian** or **Ubuntu** (or Raspberry Pi OS / Armbian). Ensure `sudo` works. |
 | 1.3 | **Network** | Connect the edge device to the **same LAN** as the IP cameras. Ensure the device can reach the **cloud** (e.g. `cloud.ively.ai` or your cloud server IP) for registration. |
-| 1.4 | **Get the code** | Clone the repo onto the device (or copy the repo folder). Example: `git clone https://github.com/IvelyTechnologies/se_ively_edge.git` then `cd se_ively_edge`. |
+| 1.4 | **Get the code** | Clone the Unified Edge repo onto the device (or copy the repo folder). Example: `git clone https://github.com/IvelyTechnologies/ively_universal_edge.git` then `cd ively_universal_edge`. |
 
 ### Phase 2 — Run the installer (on the device)
 
 | Step | Action | Expected outcome |
 |------|--------|------------------|
 | 2.1 | **SSH or console** into the edge device. | You have a shell on the device. |
-| 2.2 | `cd` into the repo (e.g. `cd ~/se_ively_edge` or `cd /path/to/se_ively_edge`). | Current directory is the repo root. |
+| 2.2 | `cd` into the repo (e.g. `cd ~/ively_universal_edge` or `cd /path/to/ively_universal_edge`). | Current directory is the repo root. |
 | 2.3 | Run **one** of the installers **as root**: | |
 | | **Venv (recommended):** `sudo bash installer/install-with-venv.sh` | |
 | | **System Python:** `sudo bash installer/install.sh` | |
@@ -184,7 +184,7 @@ Use this section as the main reference for setting up and operating the edge dev
 Run **on the edge device** as root (not from your laptop, not inside a venv):
 
 ```bash
-cd /path/to/se_ively_edge
+cd /path/to/ively_universal_edge
 sudo bash installer/install-with-venv.sh
 ```
 
