@@ -28,7 +28,7 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-_banner "Ively SmartEye™ Edge Installer"
+_banner "Ively SmartEye™ Unified Edge Installer"
 
 # Prerequisites
 apt update -y
@@ -36,14 +36,30 @@ apt install -y curl git python3 python3-pip python3-venv ffmpeg jq avahi-daemon
 
 mkdir -p /opt/ively
 
-# Clone or update repo
-if [ ! -d "/opt/ively/edge" ]; then
-  git clone https://github.com/IvelyTechnologies/se_ively_edge.git /opt/ively/edge
+# Unified Edge is a separate product. Never silently replace an existing
+# NVR-only Edge installation during a migration.
+EDGE_DIR="/opt/ively/edge"
+EDGE_REPOSITORY="${IVELY_UNIFIED_EDGE_REPOSITORY:-https://github.com/IvelyTechnologies/ively_universal_edge.git}"
+if [ -e "$EDGE_DIR" ]; then
+  if [ ! -d "$EDGE_DIR/.git" ]; then
+    echo "ERROR: $EDGE_DIR already exists but is not a Git checkout. Migration was not performed." >&2
+    exit 2
+  fi
+  CURRENT_REPOSITORY="$(git -C "$EDGE_DIR" remote get-url origin 2>/dev/null || true)"
+  if [ "$CURRENT_REPOSITORY" != "$EDGE_REPOSITORY" ]; then
+    echo "ERROR: Existing Edge installation is not Unified Edge. Migration was not performed." >&2
+    echo "Current repository: ${CURRENT_REPOSITORY:-unknown}" >&2
+    echo "Expected repository: $EDGE_REPOSITORY" >&2
+    echo "Back up and migrate during a maintenance window; do not overwrite a running NVR Edge." >&2
+    exit 2
+  fi
+  git -C "$EDGE_DIR" fetch origin
+  git -C "$EDGE_DIR" reset --hard origin/main
 else
-  (cd /opt/ively/edge && git fetch && git reset --hard origin/main)
+  git clone "$EDGE_REPOSITORY" "$EDGE_DIR"
 fi
 
-cd /opt/ively/edge
+cd "$EDGE_DIR"
 
 # Install Python dependencies (system-wide; recommended for edge devices)
 pip3 install -r requirements.txt || pip3 install --break-system-packages -r requirements.txt
